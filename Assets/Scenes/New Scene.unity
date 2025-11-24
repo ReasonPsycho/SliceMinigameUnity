@@ -353,6 +353,8 @@ MonoBehaviour:
   startPosition: {x: 0, y: 0, z: 0}
   xMax: 300
   zMax: 300
+  playerTransform: {fileID: 1593029296}
+  playerHeightOffset: 1
 --- !u!4 &745996557
 Transform:
   m_ObjectHideFlags: 0
@@ -382,7 +384,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 6387666842976111115, guid: 34bdf8d348ba4214d9c6e304e0f4e804, type: 3}
       propertyPath: m_LocalPosition.x
-      value: 300.93198
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 6387666842976111115, guid: 34bdf8d348ba4214d9c6e304e0f4e804, type: 3}
       propertyPath: m_LocalPosition.y
@@ -390,7 +392,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 6387666842976111115, guid: 34bdf8d348ba4214d9c6e304e0f4e804, type: 3}
       propertyPath: m_LocalPosition.z
-      value: 100.06409
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 6387666842976111115, guid: 34bdf8d348ba4214d9c6e304e0f4e804, type: 3}
       propertyPath: m_LocalRotation.w
@@ -425,6 +427,11 @@ PrefabInstance:
     m_AddedGameObjects: []
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 34bdf8d348ba4214d9c6e304e0f4e804, type: 3}
+--- !u!4 &1593029296 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 6387666842976111115, guid: 34bdf8d348ba4214d9c6e304e0f4e804, type: 3}
+  m_PrefabInstance: {fileID: 1373619648}
+  m_PrefabAsset: {fileID: 0}
 --- !u!4 &1886194152 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 9084590725587348838, guid: 34bdf8d348ba4214d9c6e304e0f4e804, type: 3}
@@ -490,6 +497,10 @@ PrefabInstance:
     - target: {fileID: 4159298512410030587, guid: dd918e5facdb29a4581a4cda24205f46, type: 3}
       propertyPath: m_Name
       value: Slice manager
+      objectReference: {fileID: 0}
+    - target: {fileID: 8000235054051279206, guid: dd918e5facdb29a4581a4cda24205f46, type: 3}
+      propertyPath: selectionRadius
+      value: 10
       objectReference: {fileID: 0}
     - target: {fileID: 8000235054051279206, guid: dd918e5facdb29a4581a4cda24205f46, type: 3}
       propertyPath: orthographicCamera

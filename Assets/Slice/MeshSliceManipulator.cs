@@ -9,6 +9,7 @@ public class MeshSliceManipulator : MonoBehaviour
     [SerializeField] private Color lineColor = Color.red;
     [SerializeField] private float selectionRadius = 0.5f;
     [SerializeField] private float vertexInfluenceRadius = 1f;
+    [SerializeField] private float cullingBuffer = 5f; // Extra space around camera frustum
 
     private List<Vector3> intersectionPoints = new List<Vector3>();
     private List<Vector3> interactivePoints = new List<Vector3>(); // New list for created points
@@ -18,6 +19,12 @@ public class MeshSliceManipulator : MonoBehaviour
     private Vector3? selectedPoint;
     private bool isDragging;
     private Vector3 currentMouseWorldPosition;
+    
+    // Cache for frustum planes to avoid recalculation
+    private Plane[] frustumPlanes;
+    private MeshFilter[] cachedMeshFilters;
+    private float cacheRefreshTimer = 0f;
+    private const float CACHE_REFRESH_INTERVAL = 1f; // Refresh mesh filter cache every 1 second
 
     private class MeshVertexData
     {
@@ -31,8 +38,73 @@ public class MeshSliceManipulator : MonoBehaviour
     private void Update()
     {
         if (slicePlaneTransform == null) return;
+        
+        // Update cached mesh filters periodically
+        cacheRefreshTimer += Time.deltaTime;
+        if (cachedMeshFilters == null || cacheRefreshTimer >= CACHE_REFRESH_INTERVAL)
+        {
+            cachedMeshFilters = FindObjectsOfType<MeshFilter>();
+            cacheRefreshTimer = 0f;
+        }
+        
+        // Update frustum planes for culling
+        if (orthographicCamera != null)
+        {
+            frustumPlanes = GeometryUtility.CalculateFrustumPlanes(orthographicCamera);
+        }
+        
+        // Calculate intersection points every frame (not just in Gizmos)
+        CalculateIntersectionPoints();
+        
         currentMouseWorldPosition = GetWorldPositionAtMouse();
         HandleInput();
+    }
+
+// ... existing code ...
+
+    private bool IsInCameraFrustum(Bounds bounds)
+    {
+        if (frustumPlanes == null || orthographicCamera == null)
+            return true; // If no camera or frustum, include everything
+        
+        // Expand bounds slightly to include objects near the edge
+        Bounds expandedBounds = bounds;
+        expandedBounds.Expand(cullingBuffer);
+        
+        return GeometryUtility.TestPlanesAABB(frustumPlanes, expandedBounds);
+    }
+
+    private void CalculateIntersectionPoints()
+    {
+        intersectionPoints.Clear();
+        
+        if (cachedMeshFilters == null)
+            return;
+        
+        foreach (MeshFilter meshFilter in cachedMeshFilters)
+        {
+            Mesh mesh = meshFilter.sharedMesh;
+            if (mesh == null) continue;
+            
+            // Check if mesh is in camera frustum
+            Renderer renderer = meshFilter.GetComponent<Renderer>();
+            if (renderer != null && !IsInCameraFrustum(renderer.bounds))
+                continue;
+
+            Vector3[] vertices = mesh.vertices;
+            int[] triangles = mesh.triangles;
+            
+            Matrix4x4 localToWorld = meshFilter.transform.localToWorldMatrix;
+
+            for (int i = 0; i < triangles.Length; i += 3)
+            {
+                Vector3 v1 = localToWorld.MultiplyPoint3x4(vertices[triangles[i]]);
+                Vector3 v2 = localToWorld.MultiplyPoint3x4(vertices[triangles[i + 1]]);
+                Vector3 v3 = localToWorld.MultiplyPoint3x4(vertices[triangles[i + 2]]);
+
+                FindIntersectionPoints(v1, v2, v3);
+            }
+        }
     }
 
     private Vector3 GetWorldPositionAtMouse()
@@ -189,12 +261,19 @@ public class MeshSliceManipulator : MonoBehaviour
         if (!selectedPoint.HasValue) return;
 
         float sliceHeight = slicePlaneTransform.position.y;
-        MeshFilter[] meshFilters = FindObjectsOfType<MeshFilter>();
         
-        foreach (MeshFilter meshFilter in meshFilters)
+        if (cachedMeshFilters == null)
+            return;
+        
+        foreach (MeshFilter meshFilter in cachedMeshFilters)
         {
             // Ignore objects with "Player" tag
             if (meshFilter.CompareTag("Player"))
+                continue;
+            
+            // Check if mesh is in camera frustum
+            Renderer renderer = meshFilter.GetComponent<Renderer>();
+            if (renderer != null && !IsInCameraFrustum(renderer.bounds))
                 continue;
             
             Mesh mesh = meshFilter.mesh;
@@ -267,30 +346,7 @@ public class MeshSliceManipulator : MonoBehaviour
     {
         if (slicePlaneTransform == null) return;
         
-        intersectionPoints.Clear();
-        
-        MeshFilter[] meshFilters = FindObjectsOfType<MeshFilter>();
-        
-        foreach (MeshFilter meshFilter in meshFilters)
-        {
-            Mesh mesh = meshFilter.sharedMesh;
-            if (mesh == null) continue;
-
-            Vector3[] vertices = mesh.vertices;
-            int[] triangles = mesh.triangles;
-            
-            Matrix4x4 localToWorld = meshFilter.transform.localToWorldMatrix;
-
-            for (int i = 0; i < triangles.Length; i += 3)
-            {
-                Vector3 v1 = localToWorld.MultiplyPoint3x4(vertices[triangles[i]]);
-                Vector3 v2 = localToWorld.MultiplyPoint3x4(vertices[triangles[i + 1]]);
-                Vector3 v3 = localToWorld.MultiplyPoint3x4(vertices[triangles[i + 2]]);
-
-                FindIntersectionPoints(v1, v2, v3);
-            }
-        }
-
+        // No need to recalculate - just visualize what's already calculated
         // Draw intersection lines
         Gizmos.color = lineColor;
         for (int i = 0; i < intersectionPoints.Count - 1; i += 2)
@@ -398,12 +454,18 @@ public class MeshSliceManipulator : MonoBehaviour
     
     private void CreateVerticesAtPoint(Vector3 worldPoint)
     {
-        MeshFilter[] meshFilters = FindObjectsOfType<MeshFilter>();
+        if (cachedMeshFilters == null)
+            return;
         
-        foreach (MeshFilter meshFilter in meshFilters)
+        foreach (MeshFilter meshFilter in cachedMeshFilters)
         {
             // Ignore objects with "Player" tag
             if (meshFilter.CompareTag("Player"))
+                continue;
+            
+            // Check if mesh is in camera frustum
+            Renderer renderer = meshFilter.GetComponent<Renderer>();
+            if (renderer != null && !IsInCameraFrustum(renderer.bounds))
                 continue;
             
             Mesh mesh = meshFilter.mesh;

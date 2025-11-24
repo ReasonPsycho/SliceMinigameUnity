@@ -1,4 +1,6 @@
+
 using UnityEngine;
+using System.Collections.Generic;
 
 public class ProceduralWorld : MonoBehaviour
 {
@@ -15,9 +17,16 @@ public class ProceduralWorld : MonoBehaviour
     [SerializeField] private float xMax = 30f; // Maximum X range
     [SerializeField] private float zMax = 30f; // Maximum Z range
     
+    [Header("Player")]
+    [SerializeField] private Transform playerTransform;
+    [SerializeField] private float playerHeightOffset = 1f; // Height above platform to place player
+    
+    private List<Transform> allPlatforms = new List<Transform>();
+    
     void Start()
     {
         GeneratePlatforms();
+        PlacePlayerOnHighestPlatform();
     }
     
     void GeneratePlatforms()
@@ -27,6 +36,8 @@ public class ProceduralWorld : MonoBehaviour
             Debug.LogWarning("No platform prefabs assigned!");
             return;
         }
+        
+        allPlatforms.Clear();
         
         // Calculate grid dimensions
         int gridSize = Mathf.CeilToInt(Mathf.Sqrt(platformsPerLevel));
@@ -66,9 +77,71 @@ public class ProceduralWorld : MonoBehaviour
                     // Optional: Add random rotation for variety
                     platform.transform.rotation = Quaternion.Euler(0, Random.Range(0f, 360f), 0);
                     
+                    allPlatforms.Add(platform.transform);
+                    
                     platformCount++;
                 }
             }
+        }
+    }
+    
+    void PlacePlayerOnHighestPlatform()
+    {
+        if (playerTransform == null)
+        {
+            Debug.LogWarning("Player transform not assigned!");
+            return;
+        }
+        
+        if (allPlatforms.Count == 0)
+        {
+            Debug.LogWarning("No platforms available to place player!");
+            return;
+        }
+        
+        // Find the highest level (level 2)
+        float highestY = float.MinValue;
+        foreach (Transform platform in allPlatforms)
+        {
+            if (platform.position.y > highestY)
+            {
+                highestY = platform.position.y;
+            }
+        }
+        
+        // Find platforms on the highest level
+        List<Transform> highestPlatforms = new List<Transform>();
+        foreach (Transform platform in allPlatforms)
+        {
+            if (Mathf.Approximately(platform.position.y, highestY))
+            {
+                highestPlatforms.Add(platform);
+            }
+        }
+        
+        // Find the closest platform to start position
+        Transform closestPlatform = null;
+        float closestDistance = float.MaxValue;
+        
+        foreach (Transform platform in highestPlatforms)
+        {
+            float distance = Vector3.Distance(new Vector3(platform.position.x, 0, platform.position.z), 
+                                              new Vector3(startPosition.x, 0, startPosition.z));
+            if (distance < closestDistance)
+            {
+                closestDistance = distance;
+                closestPlatform = platform;
+            }
+        }
+        
+        // Place player on the closest highest platform
+        if (closestPlatform != null)
+        {
+            Vector3 playerPosition = closestPlatform.position;
+            playerPosition.y += playerHeightOffset;
+            playerTransform.position = playerPosition;
+            
+            Debug.Log($"Player placed on platform: {closestPlatform.name} at position: {playerPosition}");
         }
     }
     
@@ -82,5 +155,6 @@ public class ProceduralWorld : MonoBehaviour
         }
         
         GeneratePlatforms();
+        PlacePlayerOnHighestPlatform();
     }
 }
