@@ -9,22 +9,37 @@ public class MeshSliceManipulator : MonoBehaviour
     [SerializeField] private Color lineColor = Color.red;
     [SerializeField] private float selectionRadius = 0.5f;
     [SerializeField] private float vertexInfluenceRadius = 1f;
-    [SerializeField] private float cullingBuffer = 5f; // Extra space around camera frustum
+    [SerializeField] private float cullingBuffer = 5f;
+    
+    [Header("Vertical Editing")]
+    [SerializeField] private bool enableColorBasedVerticalEditing = true;
+    [SerializeField] private GameObject playerReference;
+    [SerializeField] private Color[] verticalEditColors = new Color[] 
+    { 
+        Color.red, 
+    };
+    [SerializeField] private float colorMatchThreshold = 0.5f;
+    [SerializeField] private float verticalDragSensitivity = 0.1f;
+    [SerializeField] private float maxVerticalDrag = 10f;
+    [SerializeField] private Color verticalEditIndicatorColor = Color.cyan;
 
     private List<Vector3> intersectionPoints = new List<Vector3>();
-    private List<Vector3> interactivePoints = new List<Vector3>(); // New list for created points
-    private Dictionary<MeshFilter, List<int>> newVertexIndices = new Dictionary<MeshFilter, List<int>>(); // Track new vertices per mesh
+    private List<Vector3> interactivePoints = new List<Vector3>();
+    private Dictionary<MeshFilter, List<int>> newVertexIndices = new Dictionary<MeshFilter, List<int>>();
     private List<MeshVertexData> affectedVertices = new List<MeshVertexData>();
     private Vector3? dragStartPoint;
     private Vector3? selectedPoint;
     private bool isDragging;
     private Vector3 currentMouseWorldPosition;
+    private bool isVerticalEditMode = false;
+    private float verticalDragStartY = 0f;
+    private float accumulatedVerticalDrag = 0f;
     
     // Cache for frustum planes to avoid recalculation
     private Plane[] frustumPlanes;
     private MeshFilter[] cachedMeshFilters;
     private float cacheRefreshTimer = 0f;
-    private const float CACHE_REFRESH_INTERVAL = 1f; // Refresh mesh filter cache every 1 second
+    private const float CACHE_REFRESH_INTERVAL = 1f;
 
     private class MeshVertexData
     {
@@ -32,8 +47,10 @@ public class MeshSliceManipulator : MonoBehaviour
         public int VertexIndex;
         public Vector3 OriginalPosition;
         public float DistanceToSelected;
-        public bool IsNewVertex; // Track if this is a newly created vertex
+        public bool IsNewVertex;
     }
+    
+    
     
     private void Update()
     {
@@ -53,21 +70,69 @@ public class MeshSliceManipulator : MonoBehaviour
             frustumPlanes = GeometryUtility.CalculateFrustumPlanes(orthographicCamera);
         }
         
-        // Calculate intersection points every frame (not just in Gizmos)
+        // Update vertical edit mode based on player color
+        UpdateVerticalEditMode();
+        
+        // Calculate intersection points every frame
         CalculateIntersectionPoints();
         
         currentMouseWorldPosition = GetWorldPositionAtMouse();
         HandleInput();
     }
-
-// ... existing code ...
+    
+    private void UpdateVerticalEditMode()
+    {
+        if (!enableColorBasedVerticalEditing || playerReference == null)
+        {
+            isVerticalEditMode = false;
+            return;
+        }
+        
+        // Get player's current color
+        Color playerColor = GetPlayerColor();
+        
+        // Check if player color matches any of the vertical edit colors
+        isVerticalEditMode = false;
+        foreach (Color verticalColor in verticalEditColors)
+        {
+            float colorDistance = GetColorDistance(playerColor, verticalColor);
+            if (colorDistance < colorMatchThreshold)
+            {
+                isVerticalEditMode = true;
+                break;
+            }
+        }
+    }
+    
+    private Color GetPlayerColor()
+    {
+        if (playerReference == null)
+            return Color.white;
+        
+        // Try to get the renderer from the player
+        Renderer playerRenderer = playerReference.GetComponent<Renderer>();
+        if (playerRenderer != null && playerRenderer.material != null)
+        {
+            return playerRenderer.material.color;
+        }
+        
+        return Color.white;
+    }
+    
+    private float GetColorDistance(Color a, Color b)
+    {
+        // Calculate Euclidean distance in RGB space
+        float rDiff = a.r - b.r;
+        float gDiff = a.g - b.g;
+        float bDiff = a.b - b.b;
+        return Mathf.Sqrt(rDiff * rDiff + gDiff * gDiff + bDiff * bDiff);
+    }
 
     private bool IsInCameraFrustum(Bounds bounds)
     {
         if (frustumPlanes == null || orthographicCamera == null)
-            return true; // If no camera or frustum, include everything
+            return true;
         
-        // Expand bounds slightly to include objects near the edge
         Bounds expandedBounds = bounds;
         expandedBounds.Expand(cullingBuffer);
         
@@ -126,6 +191,8 @@ public class MeshSliceManipulator : MonoBehaviour
             {
                 selectedPoint = nearestPoint;
                 dragStartPoint = currentMouseWorldPosition;
+                verticalDragStartY = Mouse.current.position.ReadValue().y;
+                accumulatedVerticalDrag = 0f;
                 isDragging = true;
                 CollectAffectedVertices();
             }
@@ -138,6 +205,8 @@ public class MeshSliceManipulator : MonoBehaviour
                     interactivePoints.Add(newPoint.Value);
                     selectedPoint = newPoint.Value;
                     dragStartPoint = currentMouseWorldPosition;
+                    verticalDragStartY = Mouse.current.position.ReadValue().y;
+                    accumulatedVerticalDrag = 0f;
                     isDragging = true;
                     
                     // Create actual vertices in the mesh at this point
@@ -148,19 +217,47 @@ public class MeshSliceManipulator : MonoBehaviour
         }
         else if (isDragging && Mouse.current.leftButton.isPressed)
         {
-            Vector3 dragDelta = currentMouseWorldPosition - dragStartPoint.Value;
-            Vector3 planeNormal = slicePlaneTransform.up;
-            Vector3 projectedDelta = Vector3.ProjectOnPlane(dragDelta, planeNormal);
-            UpdateMeshVertices(projectedDelta);
-
-            // Update the interactive point position if we're dragging one
-            if (selectedPoint.HasValue)
+            if (isVerticalEditMode)
             {
-                int index = interactivePoints.IndexOf(selectedPoint.Value);
-                if (index != -1)
+                // Vertical editing mode - drag mouse up/down to move vertices vertically
+                float currentMouseY = Mouse.current.position.ReadValue().y;
+                float mouseDeltaY = currentMouseY - verticalDragStartY;
+                float verticalDelta = mouseDeltaY * verticalDragSensitivity;
+                verticalDelta = Mathf.Clamp(verticalDelta, -maxVerticalDrag, maxVerticalDrag);
+                
+                Vector3 verticalDrag = Vector3.up * verticalDelta;
+                UpdateMeshVerticesVertical(verticalDrag);
+                
+                // Update the interactive point position if we're dragging one
+                if (selectedPoint.HasValue)
                 {
-                    interactivePoints[index] = selectedPoint.Value + projectedDelta;
-                    selectedPoint = interactivePoints[index];
+                    int index = interactivePoints.IndexOf(selectedPoint.Value);
+                    if (index != -1)
+                    {
+                        Vector3 basePoint = selectedPoint.Value;
+                        basePoint.y = slicePlaneTransform.position.y + verticalDelta;
+                        interactivePoints[index] = basePoint;
+                        selectedPoint = interactivePoints[index];
+                    }
+                }
+            }
+            else
+            {
+                // Horizontal editing mode - existing behavior
+                Vector3 dragDelta = currentMouseWorldPosition - dragStartPoint.Value;
+                Vector3 planeNormal = slicePlaneTransform.up;
+                Vector3 projectedDelta = Vector3.ProjectOnPlane(dragDelta, planeNormal);
+                UpdateMeshVertices(projectedDelta);
+
+                // Update the interactive point position if we're dragging one
+                if (selectedPoint.HasValue)
+                {
+                    int index = interactivePoints.IndexOf(selectedPoint.Value);
+                    if (index != -1)
+                    {
+                        interactivePoints[index] = selectedPoint.Value + projectedDelta;
+                        selectedPoint = interactivePoints[index];
+                    }
                 }
             }
         }
@@ -170,6 +267,7 @@ public class MeshSliceManipulator : MonoBehaviour
             selectedPoint = null;
             dragStartPoint = null;
             affectedVertices.Clear();
+            accumulatedVerticalDrag = 0f;
         }
     }
 
@@ -265,10 +363,13 @@ public class MeshSliceManipulator : MonoBehaviour
         if (cachedMeshFilters == null)
             return;
         
+        // Check if player is green to determine if we should skip player tag check
+        bool isPlayerGreen = IsPlayerGreen();
+        
         foreach (MeshFilter meshFilter in cachedMeshFilters)
         {
-            // Ignore objects with "Player" tag
-            if (meshFilter.CompareTag("Player"))
+            // Skip objects with "Player" tag ONLY if player is NOT green
+            if (meshFilter.CompareTag("Player") && !isPlayerGreen)
                 continue;
             
             // Check if mesh is in camera frustum
@@ -306,9 +407,8 @@ public class MeshSliceManipulator : MonoBehaviour
         }
     }
 
-    private void UpdateMeshVertices(Vector3 dragDelta)
+    private void UpdateMeshVerticesVertical(Vector3 verticalDrag)
     {
-        Debug.Log("Updating mesh vertices");
         Dictionary<MeshFilter, bool> modifiedMeshes = new Dictionary<MeshFilter, bool>();
 
         foreach (var vertexData in affectedVertices)
@@ -319,6 +419,47 @@ public class MeshSliceManipulator : MonoBehaviour
 
             float influence = 1 - (vertexData.DistanceToSelected / vertexInfluenceRadius);
             influence = Mathf.Clamp01(influence);
+            
+            // Apply smooth falloff curve
+            influence = influence * influence * (3f - 2f * influence); // Smoothstep
+
+            Vector3 localVerticalDrag = meshFilter.transform.InverseTransformDirection(verticalDrag);
+            vertices[vertexData.VertexIndex] = vertexData.OriginalPosition + localVerticalDrag * influence;
+
+            mesh.vertices = vertices;
+            modifiedMeshes[meshFilter] = true;
+        }
+
+        foreach (var kvp in modifiedMeshes)
+        {
+            MeshFilter meshFilter = kvp.Key;
+            Mesh mesh = meshFilter.mesh;
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+
+            MeshCollider meshCollider = meshFilter.GetComponent<MeshCollider>();
+            if (meshCollider != null)
+            {
+                meshCollider.sharedMesh = mesh;
+            }
+        }
+    }
+
+    private void UpdateMeshVertices(Vector3 dragDelta)
+    {
+        Dictionary<MeshFilter, bool> modifiedMeshes = new Dictionary<MeshFilter, bool>();
+
+        foreach (var vertexData in affectedVertices)
+        {
+            MeshFilter meshFilter = vertexData.MeshFilter;
+            Mesh mesh = meshFilter.mesh;
+            Vector3[] vertices = mesh.vertices;
+
+            float influence = 1 - (vertexData.DistanceToSelected / vertexInfluenceRadius);
+            influence = Mathf.Clamp01(influence);
+            
+            // Apply smooth falloff curve
+            influence = influence * influence * (3f - 2f * influence); // Smoothstep
 
             Vector3 localDragDelta = meshFilter.transform.InverseTransformDirection(dragDelta);
             vertices[vertexData.VertexIndex] = vertexData.OriginalPosition + localDragDelta * influence;
@@ -346,7 +487,6 @@ public class MeshSliceManipulator : MonoBehaviour
     {
         if (slicePlaneTransform == null) return;
         
-        // No need to recalculate - just visualize what's already calculated
         // Draw intersection lines
         Gizmos.color = lineColor;
         for (int i = 0; i < intersectionPoints.Count - 1; i += 2)
@@ -365,26 +505,48 @@ public class MeshSliceManipulator : MonoBehaviour
         // Draw mouse position
         if (Application.isPlaying)
         {
-            Gizmos.color = Color.blue;
+            Gizmos.color = isVerticalEditMode ? verticalEditIndicatorColor : Color.blue;
             Gizmos.DrawWireSphere(currentMouseWorldPosition, 0.1f);
-            Gizmos.color = new Color(0, 0, 1, 0.2f);
+            Gizmos.color = new Color(
+                isVerticalEditMode ? verticalEditIndicatorColor.r : 0, 
+                isVerticalEditMode ? verticalEditIndicatorColor.g : 0, 
+                isVerticalEditMode ? verticalEditIndicatorColor.b : 1, 
+                0.2f);
             Gizmos.DrawSphere(currentMouseWorldPosition, 0.1f);
             
             // Draw selection radius
-            Gizmos.color = new Color(0, 0, 1, 0.1f);
+            Gizmos.color = new Color(
+                isVerticalEditMode ? verticalEditIndicatorColor.r : 0, 
+                isVerticalEditMode ? verticalEditIndicatorColor.g : 0, 
+                isVerticalEditMode ? verticalEditIndicatorColor.b : 1, 
+                0.1f);
             DrawCircleOnPlane(currentMouseWorldPosition, selectionRadius);
         }
 
         // Draw selected point
         if (selectedPoint.HasValue)
         {
-            Gizmos.color = Color.yellow;
-            Gizmos.DrawSphere(selectedPoint.Value, 0.1f);
+            Gizmos.color = isVerticalEditMode ? verticalEditIndicatorColor : Color.yellow;
+            Gizmos.DrawSphere(selectedPoint.Value, 0.15f);
             
             if (isDragging)
             {
-                Gizmos.color = new Color(1f, 1f, 0f, 0.2f);
+                Gizmos.color = isVerticalEditMode ? 
+                    new Color(verticalEditIndicatorColor.r, verticalEditIndicatorColor.g, verticalEditIndicatorColor.b, 0.3f) :
+                    new Color(1f, 1f, 0f, 0.2f);
                 DrawCircleOnPlane(selectedPoint.Value, vertexInfluenceRadius);
+                
+                // Draw vertical indicator when in vertical edit mode
+                if (isVerticalEditMode)
+                {
+                    Gizmos.color = verticalEditIndicatorColor;
+                    Gizmos.DrawLine(selectedPoint.Value + Vector3.down * 2f, selectedPoint.Value + Vector3.up * 2f);
+                    
+                    // Draw max drag limits
+                    Gizmos.color = new Color(verticalEditIndicatorColor.r, verticalEditIndicatorColor.g, verticalEditIndicatorColor.b, 0.3f);
+                    Gizmos.DrawWireSphere(selectedPoint.Value + Vector3.up * maxVerticalDrag, 0.2f);
+                    Gizmos.DrawWireSphere(selectedPoint.Value + Vector3.down * maxVerticalDrag, 0.2f);
+                }
             }
         }
 
@@ -398,8 +560,26 @@ public class MeshSliceManipulator : MonoBehaviour
         Gizmos.matrix = sliceMatrix;
         Gizmos.DrawWireCube(Vector3.zero, Vector3.one);
         Gizmos.matrix = Matrix4x4.identity;
+        
+        // Draw mode indicator text at top of screen (in scene view)
+        if (Application.isPlaying && isDragging)
+        {
+            GUIStyle style = new GUIStyle();
+            style.normal.textColor = isVerticalEditMode ? verticalEditIndicatorColor : Color.yellow;
+            style.fontSize = 16;
+            style.fontStyle = FontStyle.Bold;
+            
+            #if UNITY_EDITOR
+            UnityEditor.Handles.Label(
+                orthographicCamera.transform.position + orthographicCamera.transform.forward * 5f,
+                isVerticalEditMode ? "VERTICAL EDIT MODE (Hold Shift)" : "HORIZONTAL EDIT MODE",
+                style
+            );
+            #endif
+        }
     }
 
+// This function is unchanged, but needs to be present for the code to compile
     private void DrawCircleOnPlane(Vector3 center, float radius)
     {
         int segments = 32;
@@ -457,10 +637,13 @@ public class MeshSliceManipulator : MonoBehaviour
         if (cachedMeshFilters == null)
             return;
         
+        // Check if player is green to determine if we should skip player tag check
+        bool isPlayerGreen = IsPlayerGreen();
+        
         foreach (MeshFilter meshFilter in cachedMeshFilters)
         {
-            // Ignore objects with "Player" tag
-            if (meshFilter.CompareTag("Player"))
+            // Skip objects with "Player" tag ONLY if player is NOT green
+            if (meshFilter.CompareTag("Player") && !isPlayerGreen)
                 continue;
             
             // Check if mesh is in camera frustum
@@ -610,5 +793,15 @@ public class MeshSliceManipulator : MonoBehaviour
         float u = 1.0f - v - w;
         
         return new Vector3(u, v, w);
+    }
+    
+    private bool IsPlayerGreen()
+    {
+        if (playerReference == null)
+            return false;
+        
+        Color playerColor = GetPlayerColor();
+        float colorDistance = GetColorDistance(playerColor, Color.green);
+        return colorDistance < colorMatchThreshold;
     }
 }
